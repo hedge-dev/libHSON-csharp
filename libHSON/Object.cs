@@ -637,8 +637,31 @@ namespace libHSON
         public bool GetFlattenedParameters(
             ParameterCollection flatParams, string rootPath = "")
         {
-            // TODO
-            throw new NotImplementedException();
+            // Add all parameters from the current object.
+            bool insertedAnyParams = false;
+            if (rootPath.Length > 0)
+            {
+                if (LocalParameters.TryGetValue(rootPath, out var param) &&
+                    param.IsObject)
+                {
+                    insertedAnyParams = flatParams.InsertCopiesFrom(
+                        param.ValueObject);
+                }
+            }
+            else
+            {
+                insertedAnyParams = flatParams.InsertCopiesFrom(
+                    LocalParameters);
+            }
+
+            // Recurse through instanced objects.
+            if (_instanceOf != null &&
+                _instanceOf.GetFlattenedParameters(flatParams, rootPath))
+            {
+                insertedAnyParams = true;
+            }
+
+            return insertedAnyParams;
         }
 
         public ParameterCollection GetFlattenedParameters(string rootPath = "")

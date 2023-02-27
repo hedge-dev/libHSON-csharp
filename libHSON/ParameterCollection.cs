@@ -425,6 +425,50 @@ namespace libHSON
                 param.Value.WriteValue(writer);
             }
         }
+
+        internal bool InsertCopiesFrom(ParameterCollection other)
+        {
+            bool insertedAnyParams = false;
+            foreach (var otherParam in other._data)
+            {
+                // For object parameters, insert a recursive deep copy.
+                if (otherParam.Value.IsObject)
+                {
+                    // Get the existing object parameter, if any.
+                    if (_data.TryGetValue(otherParam.Key, out var myParam))
+                    {
+                        // Ensure it is actually of type object.
+                        if (!myParam.IsObject)
+                        {
+                            continue;
+                        }
+                    }
+
+                    // If no object parameter exists yet, create a new one.
+                    else
+                    {
+                        myParam = new Parameter(ParameterType.Object);
+                        _data.Add(otherParam.Key, myParam);
+                        insertedAnyParams = true;
+                    }
+
+                    // Recursively insert copies into the object parameter we got/created.
+                    if (myParam.ValueObject.InsertCopiesFrom(
+                        otherParam.Value.ValueObject))
+                    {
+                        insertedAnyParams = true;
+                    }
+                }
+
+                // For non-object parameters, just insert a reference.
+                else if (_data.TryAdd(otherParam.Key, otherParam.Value))
+                {
+                    insertedAnyParams = true;
+                }
+            }
+
+            return insertedAnyParams;
+        }
         #endregion Internal Methods
 
         #region Public Methods
