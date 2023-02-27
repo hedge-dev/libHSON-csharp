@@ -195,7 +195,7 @@ var project = new Project
 var startPosition1 = new libHSON.Object(
     type: "StartPosition",
     name: "StartPosition1",
-    position: new Vector3(600.0f, 240.5f, -400.0f)
+    position: new Vector3(-600.0f, 240.5f, -400.0f)
 );
 
 startPosition1.LocalParameters.Add("tags/RangeSpawning/rangeIn", new Parameter(10000.0f));
@@ -209,8 +209,8 @@ project.Objects.Add(startPosition1);
 var dashPanel1 = new libHSON.Object(
     type: "DashPanel",
     name: "DashPanel1",
-    position: new Vector3(582.1400146484375f, 135.52000427246094f, -265.260986328125f),
-    rotation: new Quaternion(0.0f, -0.258819043636322f, 0.0f, 0.9659258127212524f)
+    position: new Vector3(-582.1400146484375f, 135.52000427246094f, -265.260986328125f),
+    rotation: new Quaternion(0.0f, 0.258819043636322f, 0.0f, 0.9659258127212524f)
 );
 
 dashPanel1.LocalParameters.Add("tags/RangeSpawning/rangeIn", new Parameter(140.0f));
@@ -228,7 +228,7 @@ var dashPanel2 = new libHSON.Object(
     name: "DashPanel2",
     parent: dashPanel1, // This object's position/rotation/scale is local to DashPanel1
     instanceOf: dashPanel1, // This object inherits all of its non-specified parameters from DashPanel1
-    position: new Vector3(2.0f, 0.0f, 0.0f),
+    position: new Vector3(-2.0f, 0.0f, 0.0f),
     rotation: libHSON.Object.DefaultRotation
 );
 
