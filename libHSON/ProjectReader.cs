@@ -84,6 +84,27 @@ namespace libHSON
         private void ParseStartObject(Utf8JsonReader reader,
             ProjectReadOptions hsonOptions = default)
         {
+            // Handle parameters.
+            if (_paramStack.Count > 0)
+            {
+                // If the current parameter is an array, add a new object to it.
+                var curParam = _paramStack.Peek();
+                if (curParam.IsArray)
+                {
+                    var newParam = new Parameter(ParameterType.Object);
+                    curParam.ValueArray.Add(newParam);
+                    _paramStack.Push(newParam);
+                }
+
+                // Otherwise, replace the current parameter with a new object.
+                else
+                {
+                    curParam.ValueObject = new ParameterCollection();
+                }
+
+                return;
+            }
+
             switch (_curState)
             {
                 case State.None:
@@ -102,26 +123,6 @@ namespace libHSON
                     _curState = State.ObjectParameters;
                     break;
 
-                case State.ObjectParameters:
-                    {
-                        // If the current parameter is an array, add a new object to it.
-                        var curParam = _paramStack.Peek();
-                        if (curParam.IsArray)
-                        {
-                            var newParam = new Parameter(ParameterType.Object);
-                            curParam.ValueArray.Add(newParam);
-                            _paramStack.Push(newParam);
-                        }
-
-                        // Otherwise, replace the current parameter with a new object.
-                        else
-                        {
-                            curParam.ValueObject = new ParameterCollection();
-                        }
-
-                        break;
-                    }
-
                 default:
                     throw new InvalidDataException();
             }
@@ -130,6 +131,20 @@ namespace libHSON
         private void ParseEndObject(Utf8JsonReader reader,
             ProjectReadOptions hsonOptions = default)
         {
+            // Handle parameters.
+            if (_paramStack.Count > 0)
+            {
+                // Error out if the top parameter is not of type object.
+                if (!_paramStack.Peek().IsObject)
+                {
+                    throw new InvalidDataException();
+                }
+
+                // Otherwise, pop the top parameter off of the param stack.
+                _paramStack.Pop();
+                return;
+            }
+
             switch (_curState)
             {
                 case State.TopLevelObject:
@@ -154,24 +169,8 @@ namespace libHSON
                     break;
 
                 case State.ObjectParameters:
-                    {
-                        // If the param stack is empty, switch back to the object state.
-                        if (!_paramStack.TryPeek(out var curParam))
-                        {
-                            _curState = State.Object;
-                            break;
-                        }
-
-                        // Otherwise, error out if the top parameter is not of type object.
-                        if (!curParam.IsObject)
-                        {
-                            throw new InvalidDataException();
-                        }
-
-                        // Otherwise, pop the top parameter off of the param stack.
-                        _paramStack.Pop();
-                        break;
-                    }
+                    _curState = State.Object;
+                    break;
 
                 default:
                     throw new InvalidDataException();
@@ -181,6 +180,27 @@ namespace libHSON
         private void ParseStartArray(Utf8JsonReader reader,
             ProjectReadOptions hsonOptions = default)
         {
+            // Handle parameters.
+            if (_paramStack.Count > 0)
+            {
+                // If the current parameter is an array, add a new array to it.
+                var curParam = _paramStack.Peek();
+                if (curParam.IsArray)
+                {
+                    var newParam = new Parameter(ParameterType.Array);
+                    curParam.ValueArray.Add(newParam);
+                    _paramStack.Push(newParam);
+                }
+
+                // Otherwise, replace the current parameter with a new array.
+                else
+                {
+                    curParam.ValueArray = new List<Parameter>();
+                }
+
+                return;
+            }
+
             switch (_curState)
             {
                 case State.ObjectsSection:
@@ -206,26 +226,6 @@ namespace libHSON
                     _curState = State.ObjectScale;
                     break;
 
-                case State.ObjectParameters:
-                    {
-                        // If the current parameter is an array, add a new array to it.
-                        var curParam = _paramStack.Peek();
-                        if (curParam.IsArray)
-                        {
-                            var newParam = new Parameter(ParameterType.Array);
-                            curParam.ValueArray.Add(newParam);
-                            _paramStack.Push(newParam);
-                        }
-
-                        // Otherwise, replace the current parameter with a new array.
-                        else
-                        {
-                            curParam.ValueArray = new List<Parameter>();
-                        }
-
-                        break;
-                    }
-
                 default:
                     throw new InvalidDataException();
             }
@@ -234,6 +234,18 @@ namespace libHSON
         private void ParseEndArray(Utf8JsonReader reader,
             ProjectReadOptions hsonOptions = default)
         {
+            // Handle parameters.
+            if (_paramStack.Count > 0)
+            {
+                // Pop the top parameter off of the param stack,
+                // and ensure that it is of type array.
+                if (!_paramStack.Pop().IsArray)
+                {
+                    throw new InvalidDataException();
+                }
+                return;
+            }
+
             switch (_curState)
             {
                 case State.Objects:
@@ -265,22 +277,39 @@ namespace libHSON
                     _curState = State.Object;
                     break;
 
-                case State.ObjectParameters:
-                    {
-                        // Pop the top parameter off of the param stack,
-                        // and ensure that it is of type array.
-                        if (!_paramStack.TryPop(out var curParam) ||
-                            !curParam.IsArray)
-                        {
-                            throw new InvalidDataException();
-                        }
-
-                        break;
-                    }
-
                 default:
                     throw new InvalidDataException();
             }
+        }
+
+        private void InsertParameter(string key, ParameterCollection parameters)
+        {
+            // If an object parameter is the last in the param stack,
+            // the new parameter should be a child of that parameter.
+            ParameterCollection? curParams;
+            if (_paramStack.TryPeek(out var curParam))
+            {
+                if (curParam.IsObject)
+                {
+                    curParams = curParam.ValueObject;
+                }
+                else
+                {
+                    throw new InvalidDataException();
+                }
+            }
+
+            // Otherwise, the new parameter should just be added to
+            // the current object's local parameter list.
+            else
+            {
+                curParams = parameters;
+            }
+
+            // Add new parameter to the collection and push onto the param stack.
+            var newParam = new Parameter();
+            curParams.Add(key, newParam);
+            _paramStack.Push(newParam);
         }
 
         private void ParsePropertyName(Utf8JsonReader reader,
@@ -296,145 +325,133 @@ namespace libHSON
             switch (_curState)
             {
                 case State.TopLevelObject:
-                    if (key == "version")
+                    // NOTE: This check is to avoid conflicts with nested custom properties.
+                    if (_paramStack.Count == 0)
                     {
-                        _curState = State.FileVersionNumber;
-                        break;
-                    }
-                    else if (key == "metadata")
-                    {
-                        _curState = State.MetadataSection;
-                        break;
-                    }
-                    else if (key == "objects")
-                    {
-                        _curState = State.ObjectsSection;
-                        break;
+                        if (key == "version")
+                        {
+                            _curState = State.FileVersionNumber;
+                            break;
+                        }
+                        else if (key == "metadata")
+                        {
+                            _curState = State.MetadataSection;
+                            break;
+                        }
+                        else if (key == "objects")
+                        {
+                            _curState = State.ObjectsSection;
+                            break;
+                        }
                     }
 
-                    // TODO: Support custom properties.
-                    throw new NotImplementedException();
+                    // Custom properties.
+                    InsertParameter(key, _project.CustomProperties);
+                    break;
 
                 case State.Metadata:
-                    if (key == "name")
+                    // NOTE: This check is to avoid conflicts with nested custom properties.
+                    if (_paramStack.Count == 0)
                     {
-                        _curState = State.MetadataName;
-                        break;
-                    }
-                    else if (key == "author")
-                    {
-                        _curState = State.MetadataAuthor;
-                        break;
-                    }
-                    else if (key == "date")
-                    {
-                        _curState = State.MetadataDate;
-                        break;
-                    }
-                    else if (key == "version")
-                    {
-                        _curState = State.MetadataVersion;
-                        break;
-                    }
-                    else if (key == "description")
-                    {
-                        _curState = State.MetadataDescription;
-                        break;
+                        if (key == "name")
+                        {
+                            _curState = State.MetadataName;
+                            break;
+                        }
+                        else if (key == "author")
+                        {
+                            _curState = State.MetadataAuthor;
+                            break;
+                        }
+                        else if (key == "date")
+                        {
+                            _curState = State.MetadataDate;
+                            break;
+                        }
+                        else if (key == "version")
+                        {
+                            _curState = State.MetadataVersion;
+                            break;
+                        }
+                        else if (key == "description")
+                        {
+                            _curState = State.MetadataDescription;
+                            break;
+                        }
                     }
 
-                    // TODO: Support custom properties.
-                    throw new NotImplementedException();
+                    // Custom properties.
+                    InsertParameter(key, _project.Metadata.CustomProperties);
+                    break;
 
                 case State.Object:
-                    if (key == "id")
+                    // NOTE: This check is to avoid conflicts with nested custom properties.
+                    if (_paramStack.Count == 0)
                     {
-                        _curState = State.ObjectId;
-                        break;
-                    }
-                    else if (key == "name")
-                    {
-                        _curState = State.ObjectName;
-                        break;
-                    }
-                    else if (key == "parentId")
-                    {
-                        _curState = State.ObjectParentId;
-                        break;
-                    }
-                    else if (key == "instanceOf")
-                    {
-                        _curState = State.ObjectInstanceOf;
-                        break;
-                    }
-                    else if (key == "type")
-                    {
-                        _curState = State.ObjectType;
-                        break;
-                    }
-                    else if (key == "position")
-                    {
-                        _curState = State.ObjectPositionSection;
-                        break;
-                    }
-                    else if (key == "rotation")
-                    {
-                        _curState = State.ObjectRotationSection;
-                        break;
-                    }
-                    else if (key == "scale")
-                    {
-                        _curState = State.ObjectScaleSection;
-                        break;
-                    }
-                    else if (key == "isEditorVisible")
-                    {
-                        _curState = State.ObjectIsEditorVisible;
-                        break;
-                    }
-                    else if (key == "isExcluded")
-                    {
-                        _curState = State.ObjectIsExcluded;
-                        break;
-                    }
-                    else if (key == "parameters")
-                    {
-                        _curState = State.ObjectParametersSection;
-                        break;
+                        if (key == "id")
+                        {
+                            _curState = State.ObjectId;
+                            break;
+                        }
+                        else if (key == "name")
+                        {
+                            _curState = State.ObjectName;
+                            break;
+                        }
+                        else if (key == "parentId")
+                        {
+                            _curState = State.ObjectParentId;
+                            break;
+                        }
+                        else if (key == "instanceOf")
+                        {
+                            _curState = State.ObjectInstanceOf;
+                            break;
+                        }
+                        else if (key == "type")
+                        {
+                            _curState = State.ObjectType;
+                            break;
+                        }
+                        else if (key == "position")
+                        {
+                            _curState = State.ObjectPositionSection;
+                            break;
+                        }
+                        else if (key == "rotation")
+                        {
+                            _curState = State.ObjectRotationSection;
+                            break;
+                        }
+                        else if (key == "scale")
+                        {
+                            _curState = State.ObjectScaleSection;
+                            break;
+                        }
+                        else if (key == "isEditorVisible")
+                        {
+                            _curState = State.ObjectIsEditorVisible;
+                            break;
+                        }
+                        else if (key == "isExcluded")
+                        {
+                            _curState = State.ObjectIsExcluded;
+                            break;
+                        }
+                        else if (key == "parameters")
+                        {
+                            _curState = State.ObjectParametersSection;
+                            break;
+                        }
                     }
 
-                    // TODO: Support custom properties.
-                    throw new NotImplementedException();
+                    // Custom properties.
+                    InsertParameter(key, _curObjMap.Object.LocalCustomProperties);
+                    break;
 
                 case State.ObjectParameters:
-                    {
-                        // If an object parameter is the last in the param stack,
-                        // the new parameter should be a child of that parameter.
-                        ParameterCollection? curParams;
-                        if (_paramStack.TryPeek(out var curParam))
-                        {
-                            if (curParam.IsObject)
-                            {
-                                curParams = curParam.ValueObject;
-                            }
-                            else
-                            {
-                                throw new InvalidDataException();
-                            }
-                        }
-
-                        // Otherwise, the new parameter should just be added to
-                        // the current object's local parameter list.
-                        else
-                        {
-                            curParams = _curObjMap.Object.LocalParameters;
-                        }
-
-                        // Add new parameter to the collection and push onto the param stack.
-                        var newParam = new Parameter();
-                        curParams.Add(key, newParam);
-                        _paramStack.Push(newParam);
-                        break;
-                    }
+                    InsertParameter(key, _curObjMap.Object.LocalParameters);
+                    break;
 
                 default:
                     throw new InvalidDataException();
@@ -444,6 +461,28 @@ namespace libHSON
         private void ParseString(Utf8JsonReader reader,
             ProjectReadOptions hsonOptions = default)
         {
+            // Handle parameters.
+            if (_paramStack.Count > 0)
+            {
+                // If the current parameter is an array, add a new string to it.
+                var curParam = _paramStack.Peek();
+                if (curParam.IsArray)
+                {
+                    var newParam = new Parameter(reader.GetString()!);
+                    curParam.ValueArray.Add(newParam);
+                }
+
+                // Otherwise, replace the current parameter with a
+                // new string and pop it off of the param stack.
+                else
+                {
+                    curParam.ValueString = reader.GetString()!;
+                    _paramStack.Pop();
+                }
+
+                return;
+            }
+
             switch (_curState)
             {
                 case State.MetadataName:
@@ -496,27 +535,6 @@ namespace libHSON
                     _curState = State.Object;
                     break;
 
-                case State.ObjectParameters:
-                    {
-                        // If the current parameter is an array, add a new string to it.
-                        var curParam = _paramStack.Peek();
-                        if (curParam.IsArray)
-                        {
-                            var newParam = new Parameter(reader.GetString()!);
-                            curParam.ValueArray.Add(newParam);
-                        }
-
-                        // Otherwise, replace the current parameter with a
-                        // new string and pop it off of the param stack.
-                        else
-                        {
-                            curParam.ValueString = reader.GetString()!;
-                            _paramStack.Pop();
-                        }
-
-                        break;
-                    }
-
                 default:
                     throw new InvalidDataException();
             }
@@ -525,6 +543,78 @@ namespace libHSON
         private void ParseNumber(Utf8JsonReader reader,
             ProjectReadOptions hsonOptions = default)
         {
+            // Handle parameters.
+            if (_paramStack.Count > 0)
+            {
+                // Try to parse the number as an unsigned integer.
+                if (reader.TryGetUInt64(out var valUint))
+                {
+                    // If the current parameter is an array, add a new uint to it.
+                    var curParam = _paramStack.Peek();
+                    if (curParam.IsArray)
+                    {
+                        var newParam = new Parameter(valUint);
+                        curParam.ValueArray.Add(newParam);
+                    }
+
+                    // Otherwise, replace the current parameter with a
+                    // new uint and pop it off of the param stack.
+                    else
+                    {
+                        curParam.ValueUnsignedInteger = valUint;
+                        _paramStack.Pop();
+                    }
+                }
+
+                // Try to parse the number as a signed integer.
+                else if (reader.TryGetInt64(out var valInt))
+                {
+                    // If the current parameter is an array, add a new int to it.
+                    var curParam = _paramStack.Peek();
+                    if (curParam.IsArray)
+                    {
+                        var newParam = new Parameter(valInt);
+                        curParam.ValueArray.Add(newParam);
+                    }
+
+                    // Otherwise, replace the current parameter with a
+                    // new int and pop it off of the param stack.
+                    else
+                    {
+                        curParam.ValueSignedInteger = valInt;
+                        _paramStack.Pop();
+                    }
+                }
+
+                // Try to parse the number as a floating point.
+                else if (reader.TryGetDouble(out var valDouble))
+                {
+                    // If the current parameter is an array, add a new double to it.
+                    var curParam = _paramStack.Peek();
+                    if (curParam.IsArray)
+                    {
+                        var newParam = new Parameter(valDouble);
+                        curParam.ValueArray.Add(newParam);
+                    }
+
+                    // Otherwise, replace the current parameter with a
+                    // new double and pop it off of the param stack.
+                    else
+                    {
+                        curParam.ValueFloatingPoint = valDouble;
+                        _paramStack.Pop();
+                    }
+                }
+
+                // We failed to parse the number into a type accepted by Parameter.
+                else
+                {
+                    throw new InvalidDataException();
+                }
+
+                return;
+            }
+
             switch (_curState)
             {
                 case State.FileVersionNumber:
@@ -562,77 +652,6 @@ namespace libHSON
                     _curVecData[_curVecElemIndex++] = reader.GetSingle();
                     break;
 
-                case State.ObjectParameters:
-                    {
-                        // Try to parse the number as an unsigned integer.
-                        if (reader.TryGetUInt64(out var valUint))
-                        {
-                            // If the current parameter is an array, add a new uint to it.
-                            var curParam = _paramStack.Peek();
-                            if (curParam.IsArray)
-                            {
-                                var newParam = new Parameter(valUint);
-                                curParam.ValueArray.Add(newParam);
-                            }
-
-                            // Otherwise, replace the current parameter with a
-                            // new uint and pop it off of the param stack.
-                            else
-                            {
-                                curParam.ValueUnsignedInteger = valUint;
-                                _paramStack.Pop();
-                            }
-                        }
-
-                        // Try to parse the number as a signed integer.
-                        else if (reader.TryGetInt64(out var valInt))
-                        {
-                            // If the current parameter is an array, add a new int to it.
-                            var curParam = _paramStack.Peek();
-                            if (curParam.IsArray)
-                            {
-                                var newParam = new Parameter(valInt);
-                                curParam.ValueArray.Add(newParam);
-                            }
-
-                            // Otherwise, replace the current parameter with a
-                            // new int and pop it off of the param stack.
-                            else
-                            {
-                                curParam.ValueSignedInteger = valInt;
-                                _paramStack.Pop();
-                            }
-                        }
-
-                        // Try to parse the number as a floating point.
-                        else if (reader.TryGetDouble(out var valDouble))
-                        {
-                            // If the current parameter is an array, add a new double to it.
-                            var curParam = _paramStack.Peek();
-                            if (curParam.IsArray)
-                            {
-                                var newParam = new Parameter(valDouble);
-                                curParam.ValueArray.Add(newParam);
-                            }
-
-                            // Otherwise, replace the current parameter with a
-                            // new double and pop it off of the param stack.
-                            else
-                            {
-                                curParam.ValueFloatingPoint = valDouble;
-                                _paramStack.Pop();
-                            }
-                        }
-
-                        // We failed to parse the number into a type accepted by Parameter.
-                        else
-                        {
-                            throw new InvalidDataException();
-                        }
-
-                        break;
-                    }
-
                 default:
                     throw new InvalidDataException();
             }
@@ -641,6 +660,28 @@ namespace libHSON
         private void ParseBool(Utf8JsonReader reader,
             ProjectReadOptions hsonOptions = default)
         {
+            // Handle parameters.
+            if (_paramStack.Count > 0)
+            {
+                // If the current parameter is an array, add a new boolean to it.
+                var curParam = _paramStack.Peek();
+                if (curParam.IsArray)
+                {
+                    var newParam = new Parameter(reader.GetBoolean());
+                    curParam.ValueArray.Add(newParam);
+                }
+
+                // Otherwise, replace the current parameter with a
+                // new boolean and pop it off of the param stack.
+                else
+                {
+                    curParam.ValueBoolean = reader.GetBoolean();
+                    _paramStack.Pop();
+                }
+
+                return;
+            }
+
             switch (_curState)
             {
                 case State.ObjectIsEditorVisible:
@@ -652,28 +693,6 @@ namespace libHSON
                     _curObjMap.Object.IsExcluded = reader.GetBoolean();
                     _curState = State.Object;
                     break;
-
-                case State.ObjectParameters:
-                    {
-                        // If the current parameter is an array, add a new boolean to it.
-                        var curParam = _paramStack.Peek();
-                        if (curParam.IsArray)
-                        {
-                            var newParam = new Parameter(reader.GetBoolean());
-                            curParam.ValueArray.Add(newParam);
-                        }
-
-                        // Otherwise, replace the current parameter with a
-                        // new boolean and pop it off of the param stack.
-                        else
-                        {
-                            curParam.ValueBoolean = reader.GetBoolean();
-                            _paramStack.Pop();
-                        }
-
-                        break;
-
-                    }
 
                 default:
                     throw new InvalidDataException();

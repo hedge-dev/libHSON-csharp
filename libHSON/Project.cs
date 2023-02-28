@@ -15,6 +15,8 @@ namespace libHSON
         public ProjectMetadata Metadata = new ProjectMetadata();
 
         public ObjectCollection Objects = new ObjectCollection();
+
+        public ParameterCollection CustomProperties = new ParameterCollection();
         #endregion Public Fields
 
         #region Public Methods
@@ -93,6 +95,12 @@ namespace libHSON
             if (hsonOptions.IncludeUnnecessaryProperties || Objects.Count > 0)
             {
                 Objects.WriteAll(writer, hsonOptions);
+            }
+
+            // Write custom properties if necessary.
+            if (CustomProperties.Count > 0)
+            {
+                CustomProperties.WriteAll(writer);
             }
 
             writer.WriteEndObject();
